@@ -453,6 +453,11 @@ function App() {
     const course = courses.find((item) => item.id === id);
     try {
       if (isSupabaseConfigured && course?.dbId) {
+        if (patch.name !== undefined || patch.description !== undefined)
+          await courseRepository.updateCourse(course.dbId, {
+            name: patch.name ?? course.name,
+            description: patch.description ?? course.description,
+          });
         if (patch.teacherVisible !== undefined)
           await courseRepository.setAccess(
             course.dbId,
@@ -1987,6 +1992,52 @@ function SchedulePage({
       onToast("Approve ไม่สำเร็จ");
     }
   };
+  const deleteSession = async (session: ScheduleSession) => {
+    if (session.hourEntry) {
+      onToast("ลบคาบที่ส่งรับรองหรือ Approve แล้วไม่ได้");
+      return;
+    }
+    if (
+      !window.confirm(
+        `ยืนยันลบคาบ “${session.title}” และนำออกจากตารางของ ${session.teacherName || "ครูผู้สอน"}?`,
+      )
+    )
+      return;
+    try {
+      await scheduleRepository.deleteSession(session.id);
+      await onRefresh();
+      onToast("ลบครูและคาบออกจากตารางแล้ว");
+    } catch (error) {
+      onToast(
+        error instanceof Error
+          ? `ลบรายการไม่สำเร็จ: ${error.message}`
+          : "ลบรายการไม่สำเร็จ",
+      );
+    }
+  };
+  const unassignTeacher = async (session: ScheduleSession) => {
+    if (session.hourEntry) {
+      onToast("นำครูออกจากคาบที่ส่งรับรองแล้วไม่ได้");
+      return;
+    }
+    if (
+      !window.confirm(
+        `ยืนยันนำ ${session.teacherName || "ครูผู้สอน"} ออกจากคาบ “${session.title}”?`,
+      )
+    )
+      return;
+    try {
+      await scheduleRepository.unassignTeacher(session.id);
+      await onRefresh();
+      onToast("นำครูออกจากตารางแล้ว สามารถเลือกครูใหม่ภายหลังได้");
+    } catch (error) {
+      onToast(
+        error instanceof Error
+          ? `นำครูออกไม่สำเร็จ: ${error.message}`
+          : "นำครูออกไม่สำเร็จ",
+      );
+    }
+  };
   return (
     <div className="fade-in">
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
@@ -2093,6 +2144,29 @@ function SchedulePage({
                           >
                             <Pencil size={15} /> แก้ตาราง
                           </Button>
+                          {session.teacherId && (
+                            <button
+                              type="button"
+                              onClick={() => unassignTeacher(session)}
+                              disabled={Boolean(session.hourEntry)}
+                              className="inline-flex items-center gap-2 rounded-xl border border-blue-200 bg-white px-4 py-2.5 text-sm font-black text-blue-700 transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              <X size={15} /> นำครูออก
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => deleteSession(session)}
+                            disabled={Boolean(session.hourEntry)}
+                            title={
+                              session.hourEntry
+                                ? "คาบนี้ส่งรับรองแล้ว จึงลบไม่ได้"
+                                : "ลบครูและคาบออกจากตาราง"
+                            }
+                            className="inline-flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 text-sm font-black text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            <Trash2 size={15} /> ลบจากตาราง
+                          </button>
                           {submitted && (
                             <Button onClick={() => approve(session)}>
                               <Check size={15} /> Approve
@@ -2197,7 +2271,8 @@ function ScheduleEditor({
       .then(([teacherRows, studentRows]) => {
         setTeachers(teacherRows);
         setStudents(studentRows);
-        if (!teacherId && teacherRows[0]) setTeacherId(teacherRows[0].id);
+        if (!session && !teacherId && teacherRows[0])
+          setTeacherId(teacherRows[0].id);
       })
       .catch((cause) =>
         setError(
@@ -2220,6 +2295,7 @@ function ScheduleEditor({
           endsAt: new Date(endsAt).toISOString(),
           meetUrl,
           studentIds: selectedStudentIds,
+          teacherId: teacherId || null,
         });
       else {
         const created = await scheduleRepository.create({
@@ -2312,13 +2388,14 @@ function ScheduleEditor({
               ครูผู้สอน
             </span>
             <select
-              required
-              disabled={Boolean(session)}
+              required={!session}
               value={teacherId}
               onChange={(event) => setTeacherId(event.target.value)}
               className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"
             >
-              <option value="">เลือกครู</option>
+              <option value="">
+                {session ? "ยังไม่กำหนดครู" : "เลือกครู"}
+              </option>
               {teachers.map((teacher) => (
                 <option key={teacher.id} value={teacher.id}>
                   {teacher.name}
@@ -3141,6 +3218,16 @@ function CoursesPage({
   ) => void;
 }) {
   const isAdmin = role === "admin";
+  const [courseSearch, setCourseSearch] = useState("");
+  const [editingCourse, setEditingCourse] = useState<Course | null>(null);
+  const filteredCourses = courses.filter((course) => {
+    const keyword = courseSearch.trim().toLocaleLowerCase("th-TH");
+    return (
+      !keyword ||
+      course.name.toLocaleLowerCase("th-TH").includes(keyword) ||
+      course.description.toLocaleLowerCase("th-TH").includes(keyword)
+    );
+  });
   if (selectedCourse)
     return (
       <CourseDetail
@@ -3181,6 +3268,27 @@ function CoursesPage({
         )}
       </div>
       {isAdmin && <SetupSteps active={1} />}
+      {courses.length > 0 && (
+        <div className="card mt-6 flex items-center gap-3 border border-blue-100 px-4 py-3">
+          <Search size={19} className="shrink-0 text-blue-500" />
+          <input
+            value={courseSearch}
+            onChange={(event) => setCourseSearch(event.target.value)}
+            placeholder="ค้นหาจากชื่อหรือรายละเอียดรายวิชา..."
+            className="w-full bg-transparent text-sm font-semibold text-blue-900 outline-none placeholder:text-blue-300"
+          />
+          {courseSearch && (
+            <button
+              type="button"
+              onClick={() => setCourseSearch("")}
+              className="rounded-lg p-1 text-blue-400 hover:bg-blue-50"
+              aria-label="ล้างคำค้นหา"
+            >
+              <X size={17} />
+            </button>
+          )}
+        </div>
+      )}
       {courses.length === 0 ? (
         <div className="card mt-8 min-h-[470px] p-8">
           <EmptyState
@@ -3195,17 +3303,37 @@ function CoursesPage({
             onAction={onCreate}
           />
         </div>
+      ) : filteredCourses.length === 0 ? (
+        <div className="card mt-8 p-10 text-center">
+          <Search className="mx-auto text-blue-300" size={30} />
+          <h2 className="mt-3 font-black text-blue-900">ไม่พบรายวิชา</h2>
+          <p className="mt-1 text-sm text-blue-500">
+            ลองค้นหาด้วยชื่อหรือคำอธิบายอื่น
+          </p>
+        </div>
       ) : (
         <div className="mt-8 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-          {courses.map((course) => (
+          {filteredCourses.map((course) => (
             <CourseCard
               key={course.id}
               course={course}
               onClick={() => onSelect(course.id)}
               role={role}
+              onEdit={() => setEditingCourse(course)}
+              onDelete={() => onDeleteCourse(course.id)}
             />
           ))}
         </div>
+      )}
+      {editingCourse && (
+        <CourseEditModal
+          course={editingCourse}
+          onClose={() => setEditingCourse(null)}
+          onSave={async (name, description) => {
+            await onUpdate(editingCourse.id, { name, description });
+            setEditingCourse(null);
+          }}
+        />
       )}
     </div>
   );
@@ -3215,49 +3343,137 @@ function CourseCard({
   course,
   onClick,
   role,
+  onEdit,
+  onDelete,
 }: {
   course: Course;
   onClick: () => void;
   role: Role;
+  onEdit?: () => void;
+  onDelete?: () => void | Promise<void>;
 }) {
   const lessonCount = course.levels.reduce(
     (sum, level) => sum + level.lessons.length,
     0,
   );
   return (
-    <button
-      onClick={onClick}
-      className="card group overflow-hidden text-left transition hover:-translate-y-1 hover:shadow-xl hover:shadow-slate-200/50"
-    >
-      <div className="relative h-32 overflow-hidden bg-gradient-to-br from-brand-500 to-sky-400 p-5 text-white pattern-dots">
-        <BookOpen size={30} />
-        <div className="absolute -bottom-12 -right-7 size-36 rounded-full bg-white/10" />
-        {role === "admin" && (
-          <span
-            className={`absolute right-4 top-4 rounded-full px-2.5 py-1 text-[10px] font-black backdrop-blur ${course.published ? "bg-emerald-400/90 text-white" : "bg-slate-900/20 text-white"}`}
-          >
-            {course.published ? "เผยแพร่แล้ว" : "ฉบับร่าง"}
-          </span>
-        )}
-      </div>
-      <div className="p-5">
-        <h3 className="font-black text-slate-800 group-hover:text-brand-600">
-          {course.name}
-        </h3>
-        <p className="mt-1 line-clamp-2 min-h-10 text-xs leading-5 text-slate-400">
-          {course.description || "ยังไม่มีคำอธิบายรายวิชา"}
-        </p>
-        <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-4 text-xs">
-          <span className="text-slate-500">
-            <b className="text-slate-700">{course.levels.length}</b> Level ·{" "}
-            <b className="text-slate-700">{lessonCount}</b> Lesson
-          </span>
-          <span className="flex items-center gap-1 font-bold text-brand-600">
-            เปิดดู <ChevronRight size={14} />
-          </span>
+    <div className="card group overflow-hidden text-left transition hover:-translate-y-1 hover:shadow-xl hover:shadow-slate-200/50">
+      <button onClick={onClick} className="block w-full text-left">
+        <div className="relative h-32 overflow-hidden bg-gradient-to-br from-brand-500 to-sky-400 p-5 text-white pattern-dots">
+          <BookOpen size={30} />
+          <div className="absolute -bottom-12 -right-7 size-36 rounded-full bg-white/10" />
+          {role === "admin" && (
+            <span
+              className={`absolute right-4 top-4 rounded-full px-2.5 py-1 text-[10px] font-black backdrop-blur ${course.published ? "bg-emerald-400/90 text-white" : "bg-slate-900/20 text-white"}`}
+            >
+              {course.published ? "เผยแพร่แล้ว" : "ฉบับร่าง"}
+            </span>
+          )}
         </div>
-      </div>
-    </button>
+        <div className="p-5 pb-3">
+          <h3 className="text-base font-black text-blue-900 group-hover:text-blue-600">
+            {course.name}
+          </h3>
+          <p className="mt-1 line-clamp-2 min-h-10 text-sm leading-6 text-blue-700/75">
+            {course.description || "ยังไม่มีคำอธิบายรายวิชา"}
+          </p>
+          <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-4 text-xs">
+            <span className="text-slate-500">
+              <b className="text-slate-700">{course.levels.length}</b> Level ·{" "}
+              <b className="text-slate-700">{lessonCount}</b> Lesson
+            </span>
+            <span className="flex items-center gap-1 font-bold text-brand-600">
+              เปิดดู <ChevronRight size={14} />
+            </span>
+          </div>
+        </div>
+      </button>
+      {role === "admin" && (
+        <div className="flex gap-2 border-t border-blue-100 bg-blue-50/50 p-3">
+          <button
+            type="button"
+            onClick={onEdit}
+            className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-blue-600 px-3 py-2.5 text-xs font-black text-white hover:bg-blue-700"
+          >
+            <Pencil size={14} /> แก้ไขรายวิชา
+          </button>
+          <button
+            type="button"
+            onClick={onDelete}
+            className="flex items-center justify-center gap-2 rounded-xl border border-blue-200 bg-white px-3 py-2.5 text-xs font-black text-blue-700 hover:bg-blue-100"
+          >
+            <Trash2 size={14} /> ลบ
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CourseEditModal({
+  course,
+  onClose,
+  onSave,
+}: {
+  course: Course;
+  onClose: () => void;
+  onSave: (name: string, description: string) => Promise<void>;
+}) {
+  const [name, setName] = useState(course.name);
+  const [description, setDescription] = useState(course.description);
+  const [saving, setSaving] = useState(false);
+  return (
+    <div className="fixed inset-0 z-[80] grid place-items-center bg-slate-900/35 p-4 backdrop-blur-sm">
+      <form
+        onSubmit={async (event) => {
+          event.preventDefault();
+          setSaving(true);
+          try {
+            await onSave(name.trim(), description.trim());
+          } finally {
+            setSaving(false);
+          }
+        }}
+        className="w-full max-w-lg rounded-3xl bg-white shadow-2xl"
+      >
+        <div className="flex items-center justify-between border-b border-blue-100 p-5">
+          <div>
+            <h2 className="font-black text-blue-900">แก้ไขรายวิชา</h2>
+            <p className="text-xs text-blue-500">แก้ชื่อและรายละเอียดรายวิชา</p>
+          </div>
+          <button type="button" onClick={onClose} className="p-2 text-blue-400">
+            <X size={20} />
+          </button>
+        </div>
+        <div className="space-y-4 p-5">
+          <Input
+            label="ชื่อรายวิชา"
+            placeholder="ชื่อรายวิชา"
+            value={name}
+            onChange={setName}
+          />
+          <label className="block">
+            <span className="mb-1.5 block text-xs font-black text-blue-700">
+              รายละเอียด
+            </span>
+            <textarea
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+              rows={4}
+              className="w-full rounded-xl border border-blue-200 p-3 text-sm text-blue-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-50"
+            />
+          </label>
+        </div>
+        <div className="flex justify-end gap-2 border-t border-blue-100 p-5">
+          <Button variant="secondary" onClick={onClose}>
+            ยกเลิก
+          </Button>
+          <Button type="submit" disabled={saving || !name.trim()}>
+            <Check size={16} /> {saving ? "กำลังบันทึก..." : "บันทึก"}
+          </Button>
+        </div>
+      </form>
+    </div>
   );
 }
 
@@ -3291,6 +3507,11 @@ function CourseDetail({
   ) => void;
 }) {
   const isAdmin = role === "admin";
+  const [editingCourse, setEditingCourse] = useState(false);
+  const [courseName, setCourseName] = useState(course.name);
+  const [courseDescription, setCourseDescription] = useState(
+    course.description,
+  );
   return (
     <div className="fade-in">
       <button
@@ -3316,7 +3537,7 @@ function CourseDetail({
           </div>
           {isAdmin && (
             <div className="flex gap-2">
-              <Button variant="light">
+              <Button variant="light" onClick={() => setEditingCourse(true)}>
                 <Pencil size={16} /> แก้ไข
               </Button>
               <button
@@ -3331,6 +3552,42 @@ function CourseDetail({
           )}
         </div>
       </div>
+      {isAdmin && editingCourse && (
+        <div className="card mt-4 border border-blue-100 bg-blue-50/50 p-5">
+          <h2 className="font-black text-blue-900">แก้ไขข้อมูลรายวิชา</h2>
+          <div className="mt-4 grid gap-4 sm:grid-cols-2">
+            <Input
+              label="ชื่อรายวิชา"
+              placeholder="ชื่อรายวิชา"
+              value={courseName}
+              onChange={setCourseName}
+            />
+            <Input
+              label="คำอธิบายรายวิชา"
+              placeholder="รายละเอียดรายวิชา"
+              value={courseDescription}
+              onChange={setCourseDescription}
+            />
+          </div>
+          <div className="mt-4 flex gap-2">
+            <Button
+              disabled={!courseName.trim()}
+              onClick={async () => {
+                await onUpdate(course.id, {
+                  name: courseName.trim(),
+                  description: courseDescription.trim(),
+                });
+                setEditingCourse(false);
+              }}
+            >
+              <Check size={16} /> บันทึกการแก้ไข
+            </Button>
+            <Button variant="secondary" onClick={() => setEditingCourse(false)}>
+              ยกเลิก
+            </Button>
+          </div>
+        </div>
+      )}
       {isAdmin && <AccessPanel course={course} onUpdate={onUpdate} />}
       {isAdmin && course.dbId && (
         <TeacherAssignmentPanel courseId={course.dbId} />

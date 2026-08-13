@@ -49,6 +49,21 @@ export const courseRepository = {
     if (error) throw error;
   },
 
+  async updateCourse(
+    courseId: string,
+    input: { name: string; description: string },
+  ) {
+    const client = requireSupabase();
+    const { error } = await client
+      .from("courses")
+      .update({
+        name: input.name.trim(),
+        description: input.description.trim() || null,
+      })
+      .eq("id", courseId);
+    if (error) throw error;
+  },
+
   async createLevel(
     courseId: string,
     input: { name: string; description: string; sortOrder: number },

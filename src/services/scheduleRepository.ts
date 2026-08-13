@@ -7,7 +7,7 @@ export interface ScheduleSession {
   endsAt: string;
   status: string;
   meetUrl: string | null;
-  teacherId: string;
+  teacherId: string | null;
   studentIds: string[];
   teacherName?: string;
   courseName?: string;
@@ -254,6 +254,7 @@ export const scheduleRepository = {
       endsAt: string;
       meetUrl: string;
       studentIds: string[];
+      teacherId: string | null;
     }>,
   ) {
     const client = requireSupabase();
@@ -262,6 +263,7 @@ export const scheduleRepository = {
     if (input.startsAt !== undefined) patch.starts_at = input.startsAt;
     if (input.endsAt !== undefined) patch.ends_at = input.endsAt;
     if (input.meetUrl !== undefined) patch.meet_url = input.meetUrl || null;
+    if (input.teacherId !== undefined) patch.teacher_id = input.teacherId;
     const { error } = await client
       .from("class_sessions")
       .update(patch)
@@ -286,6 +288,43 @@ export const scheduleRepository = {
         if (insertError) throw insertError;
       }
     }
+  },
+
+  async deleteSession(id: string) {
+    const client = requireSupabase();
+    const { error } = await client.from("class_sessions").delete().eq("id", id);
+    if (error) throw error;
+  },
+
+  async unassignTeacher(id: string) {
+    const client = requireSupabase();
+    const { error } = await client.rpc("unassign_teacher_from_session", {
+      target_session_id: id,
+    });
+    if (!error) return;
+
+    const rpcUnavailable =
+      error.code === "PGRST202" ||
+      error.message.includes("schema cache") ||
+      error.message.includes("Could not find the function");
+    if (rpcUnavailable) {
+      const { error: updateError } = await client
+        .from("class_sessions")
+        .update({ teacher_id: null })
+        .eq("id", id);
+      if (!updateError) return;
+      if (
+        updateError.message.includes("not-null") ||
+        updateError.message.includes("null value")
+      )
+        throw new Error(
+          "ฐานข้อมูลยังบังคับให้คาบต้องมีครู กรุณารัน migration 012 แล้วรีโหลดหน้าเว็บ",
+        );
+      throw updateError;
+    }
+    if (error.message.includes("session_has_teaching_record"))
+      throw new Error("คาบนี้มีประวัติการสอนแล้ว จึงนำครูออกไม่ได้");
+    throw error;
   },
 
   async notifySchedule(sessionId: string) {
