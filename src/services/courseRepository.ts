@@ -36,6 +36,19 @@ export const courseRepository = {
     return data as { id: string };
   },
 
+  async archiveCourse(courseId: string) {
+    const client = requireSupabase();
+    const { error } = await client
+      .from("courses")
+      .update({
+        status: "archived",
+        archived_at: new Date().toISOString(),
+        published_at: null,
+      })
+      .eq("id", courseId);
+    if (error) throw error;
+  },
+
   async createLevel(
     courseId: string,
     input: { name: string; description: string; sortOrder: number },

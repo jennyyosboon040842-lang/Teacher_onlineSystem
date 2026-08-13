@@ -352,7 +352,11 @@ function App() {
       notify("สร้างรายวิชาแล้ว");
     } catch (error) {
       console.error(error);
-      notify("บันทึกรายวิชาไม่สำเร็จ");
+      notify(
+        error instanceof Error
+          ? `เพิ่มรายวิชาไม่สำเร็จ: ${error.message}`
+          : "เพิ่มรายวิชาไม่สำเร็จ",
+      );
     }
   };
 
@@ -475,10 +479,29 @@ function App() {
     }
   };
 
-  const deleteCourse = (id: number) => {
-    setCourses((items) => items.filter((course) => course.id !== id));
-    setSelectedCourseId(null);
-    notify("ลบรายวิชาแล้ว");
+  const deleteCourse = async (id: number) => {
+    const course = courses.find((item) => item.id === id);
+    if (!course) return;
+    if (
+      !window.confirm(
+        `ยืนยันลบรายวิชา “${course.name}” ออกจากระบบ?\n\nLevel, Lesson และไฟล์ภายในรายวิชาจะไม่แสดงให้ครูและนักเรียนเห็นอีก`,
+      )
+    )
+      return;
+    try {
+      if (isSupabaseConfigured && course.dbId)
+        await courseRepository.archiveCourse(course.dbId);
+      setCourses((items) => items.filter((item) => item.id !== id));
+      setSelectedCourseId(null);
+      notify("ลบรายวิชาแล้ว");
+    } catch (error) {
+      console.error(error);
+      notify(
+        error instanceof Error
+          ? `ลบรายวิชาไม่สำเร็จ: ${error.message}`
+          : "ลบรายวิชาไม่สำเร็จ",
+      );
+    }
   };
 
   const deleteLevel = (levelId: number) => {
@@ -3107,7 +3130,7 @@ function CoursesPage({
   onAddLevel: () => void;
   onAddLesson: (levelId: number) => void;
   onUpdate: (id: number, patch: Partial<Course>) => void;
-  onDeleteCourse: (id: number) => void;
+  onDeleteCourse: (id: number) => void | Promise<void>;
   onDeleteLevel: (id: number) => void;
   onDeleteLesson: (levelId: number, lessonId: number) => void;
   onAddResource: (levelId: number, lessonId: number) => void;
@@ -3257,7 +3280,7 @@ function CourseDetail({
   onAddLevel: () => void;
   onAddLesson: (id: number) => void;
   onUpdate: (id: number, patch: Partial<Course>) => void;
-  onDeleteCourse: (id: number) => void;
+  onDeleteCourse: (id: number) => void | Promise<void>;
   onDeleteLevel: (id: number) => void;
   onDeleteLesson: (levelId: number, lessonId: number) => void;
   onAddResource: (levelId: number, lessonId: number) => void;
@@ -3298,6 +3321,8 @@ function CourseDetail({
               </Button>
               <button
                 onClick={() => onDeleteCourse(course.id)}
+                title="ลบรายวิชา"
+                aria-label={`ลบรายวิชา ${course.name}`}
                 className="rounded-xl bg-white/10 p-3 text-white ring-1 ring-white/20 hover:bg-rose-500"
               >
                 <Trash2 size={18} />
