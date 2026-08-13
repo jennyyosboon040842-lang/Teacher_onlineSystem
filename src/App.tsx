@@ -1969,6 +1969,9 @@ function SchedulePage({
   const [editing, setEditing] = useState<ScheduleSession | null>(null);
   const [teacherHistoryOpen, setTeacherHistoryOpen] = useState(false);
   const [adminPendingOpen, setAdminPendingOpen] = useState(false);
+  const [adminApprovalQueue, setAdminApprovalQueue] = useState<
+    TeacherApprovalEntry[]
+  >([]);
   const [locallyCompletedSessionIds, setLocallyCompletedSessionIds] = useState<
     string[]
   >([]);
@@ -1976,8 +1979,14 @@ function SchedulePage({
     role === "admin"
       ? sessions.filter((session) =>
           adminPendingOpen
-            ? session.hourEntry?.status === "submitted"
-            : !session.hourEntry,
+            ? adminApprovalQueue.some(
+                (entry) =>
+                  entry.sessionId === session.id &&
+                  entry.status === "submitted",
+              )
+            : !adminApprovalQueue.some(
+                (entry) => entry.sessionId === session.id,
+              ) && !session.hourEntry,
         )
       : role === "teacher"
         ? sessions.filter((session) =>
@@ -1990,6 +1999,25 @@ function SchedulePage({
                 !locallyCompletedSessionIds.includes(session.id),
           )
         : sessions;
+  const reloadAdminApprovalQueue = async () => {
+    if (role !== "admin") return;
+    try {
+      setAdminApprovalQueue(
+        await scheduleRepository.listTeacherApprovalQueue(),
+      );
+    } catch (error) {
+      console.error("Admin approval queue loading failed", error);
+    }
+  };
+  useEffect(() => {
+    if (role !== "admin") return;
+    void reloadAdminApprovalQueue();
+    const intervalId = window.setInterval(
+      () => void reloadAdminApprovalQueue(),
+      5_000,
+    );
+    return () => window.clearInterval(intervalId);
+  }, [role]);
   const submitComplete = async (session: ScheduleSession) => {
     try {
       await scheduleRepository.submitCompletion(session.id);
@@ -2009,10 +2037,17 @@ function SchedulePage({
     }
   };
   const approve = async (session: ScheduleSession) => {
-    if (!session.hourEntry) return;
+    const queueEntry = adminApprovalQueue.find(
+      (entry) => entry.sessionId === session.id && entry.status === "submitted",
+    );
+    const entryId = session.hourEntry?.id ?? queueEntry?.entryId;
+    if (!entryId) {
+      onToast("ไม่พบรายการรอ Approve กรุณารีเฟรชแล้วลองใหม่");
+      return;
+    }
     try {
-      await scheduleRepository.approveHours(session.hourEntry.id);
-      await onRefresh();
+      await scheduleRepository.approveHours(entryId);
+      await Promise.all([onRefresh(), reloadAdminApprovalQueue()]);
       onToast("Approve ชั่วโมงสอนแล้ว");
     } catch (error) {
       console.error(error);
@@ -2109,8 +2144,12 @@ function SchedulePage({
               >
                 <Clock3 size={15} className="mr-1.5 inline" /> รอยืนยัน (
                 {
-                  sessions.filter(
-                    (item) => item.hourEntry?.status === "submitted",
+                  sessions.filter((item) =>
+                    adminApprovalQueue.some(
+                      (entry) =>
+                        entry.sessionId === item.id &&
+                        entry.status === "submitted",
+                    ),
                   ).length
                 }
                 )
@@ -2199,15 +2238,20 @@ function SchedulePage({
               const locallyCompleted = locallyCompletedSessionIds.includes(
                 session.id,
               );
+              const approvalQueueEntry = adminApprovalQueue.find(
+                (entry) => entry.sessionId === session.id,
+              );
               const submitted =
                 session.hourEntry?.status === "submitted" ||
+                approvalQueueEntry?.status === "submitted" ||
                 (locallyCompleted && !session.hourEntry);
               const approved = session.hourEntry?.status === "approved";
               const waitingForTeacherConfirmation =
                 role === "admin" &&
                 end.getTime() <= Date.now() &&
                 Boolean(session.teacherId) &&
-                !session.hourEntry;
+                !session.hourEntry &&
+                !approvalQueueEntry;
               return (
                 <div
                   key={session.id}
