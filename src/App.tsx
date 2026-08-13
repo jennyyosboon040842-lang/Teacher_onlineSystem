@@ -2016,10 +2016,6 @@ function SchedulePage({
     }
   };
   const unassignTeacher = async (session: ScheduleSession) => {
-    if (session.hourEntry) {
-      onToast("นำครูออกจากคาบที่ส่งรับรองแล้วไม่ได้");
-      return;
-    }
     if (
       !window.confirm(
         `ยืนยันนำ ${session.teacherName || "ครูผู้สอน"} ออกจากคาบ “${session.title}”?`,
@@ -2148,7 +2144,6 @@ function SchedulePage({
                             <button
                               type="button"
                               onClick={() => unassignTeacher(session)}
-                              disabled={Boolean(session.hourEntry)}
                               className="inline-flex items-center gap-2 rounded-xl border border-blue-200 bg-white px-4 py-2.5 text-sm font-black text-blue-700 transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-40"
                             >
                               <X size={15} /> นำครูออก

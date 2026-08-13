@@ -13,12 +13,6 @@ set search_path = public
 as $$
 begin
   if not public.has_role('admin') then raise exception 'permission_denied'; end if;
-  if exists (
-    select 1 from public.teacher_hour_entries
-    where session_id = target_session_id
-  ) then
-    raise exception 'session_has_teaching_record';
-  end if;
 
   update public.class_sessions
   set teacher_id = null

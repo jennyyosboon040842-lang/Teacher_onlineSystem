@@ -322,8 +322,6 @@ export const scheduleRepository = {
         );
       throw updateError;
     }
-    if (error.message.includes("session_has_teaching_record"))
-      throw new Error("คาบนี้มีประวัติการสอนแล้ว จึงนำครูออกไม่ได้");
     throw error;
   },
 
