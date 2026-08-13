@@ -300,7 +300,7 @@ function App() {
   useEffect(() => {
     if (!authEmail) return;
     const refresh = () => void reloadSessions();
-    const intervalId = window.setInterval(refresh, 30_000);
+    const intervalId = window.setInterval(refresh, 10_000);
     window.addEventListener("focus", refresh);
     return () => {
       window.clearInterval(intervalId);
@@ -1967,11 +1967,38 @@ function SchedulePage({
 }) {
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<ScheduleSession | null>(null);
+  const [teacherHistoryOpen, setTeacherHistoryOpen] = useState(false);
+  const [adminPendingOpen, setAdminPendingOpen] = useState(false);
+  const [locallyCompletedSessionIds, setLocallyCompletedSessionIds] = useState<
+    string[]
+  >([]);
+  const displayedSessions =
+    role === "admin"
+      ? sessions.filter((session) =>
+          adminPendingOpen
+            ? session.hourEntry?.status === "submitted"
+            : !session.hourEntry,
+        )
+      : role === "teacher"
+        ? sessions.filter((session) =>
+            teacherHistoryOpen
+              ? Boolean(
+                  session.hourEntry ||
+                  locallyCompletedSessionIds.includes(session.id),
+                )
+              : !session.hourEntry &&
+                !locallyCompletedSessionIds.includes(session.id),
+          )
+        : sessions;
   const submitComplete = async (session: ScheduleSession) => {
     try {
       await scheduleRepository.submitCompletion(session.id);
-      await onRefresh();
+      setLocallyCompletedSessionIds((current) =>
+        current.includes(session.id) ? current : [...current, session.id],
+      );
+      setTeacherHistoryOpen(true);
       onToast("ส่งรายการสอนเสร็จให้ Admin แล้ว");
+      await onRefresh();
     } catch (error) {
       console.error(error);
       onToast(
@@ -2040,53 +2067,165 @@ function SchedulePage({
         <PageTitle
           title={
             role === "admin"
-              ? "จัดการตารางสอน"
+              ? adminPendingOpen
+                ? "รอยืนยันการสอน"
+                : "จัดการตารางสอน"
               : role === "teacher"
-                ? "ตารางสอนของฉัน"
+                ? teacherHistoryOpen
+                  ? "ประวัติการสอน"
+                  : "ตารางสอนของฉัน"
                 : "ตารางเรียนของฉัน"
           }
           subtitle={
             role === "admin"
-              ? "เพิ่มหรือแก้เวลา ครู นักเรียน และลิงก์ห้องเรียน"
+              ? adminPendingOpen
+                ? "รายการที่ครูแจ้งว่าสอนเสร็จแล้ว รอ Admin ตรวจสอบและ Approve"
+                : "เพิ่มหรือแก้เวลา ครู นักเรียน และลิงก์ห้องเรียน"
               : "ดูคาบเรียนและเข้าสู่ห้องเรียนจากตารางของคุณ"
           }
         />
         {role === "admin" && (
-          <Button
-            onClick={() => {
-              setEditing(null);
-              setEditorOpen(true);
-            }}
-          >
-            <Plus size={17} /> เพิ่มตารางสอน
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex rounded-xl border border-blue-100 bg-white p-1 shadow-sm">
+              <button
+                type="button"
+                onClick={() => setAdminPendingOpen(false)}
+                className={`rounded-lg px-3 py-2 text-xs font-black transition ${
+                  !adminPendingOpen
+                    ? "bg-blue-600 text-white"
+                    : "text-blue-600 hover:bg-blue-50"
+                }`}
+              >
+                <CalendarDays size={15} className="mr-1.5 inline" /> ตารางสอน
+              </button>
+              <button
+                type="button"
+                onClick={() => setAdminPendingOpen(true)}
+                className={`rounded-lg px-3 py-2 text-xs font-black transition ${
+                  adminPendingOpen
+                    ? "bg-rose-600 text-white"
+                    : "text-rose-600 hover:bg-rose-50"
+                }`}
+              >
+                <Clock3 size={15} className="mr-1.5 inline" /> รอยืนยัน (
+                {
+                  sessions.filter(
+                    (item) => item.hourEntry?.status === "submitted",
+                  ).length
+                }
+                )
+              </button>
+            </div>
+            {!adminPendingOpen && (
+              <Button
+                onClick={() => {
+                  setEditing(null);
+                  setEditorOpen(true);
+                }}
+              >
+                <Plus size={17} /> เพิ่มตารางสอน
+              </Button>
+            )}
+          </div>
+        )}
+        {role === "teacher" && (
+          <div className="flex rounded-xl border border-blue-100 bg-white p-1 shadow-sm">
+            <button
+              type="button"
+              onClick={() => setTeacherHistoryOpen(false)}
+              className={`rounded-lg px-3 py-2 text-xs font-black transition ${
+                !teacherHistoryOpen
+                  ? "bg-blue-600 text-white"
+                  : "text-blue-600 hover:bg-blue-50"
+              }`}
+            >
+              <CalendarDays size={15} className="mr-1.5 inline" /> ตารางสอน
+            </button>
+            <button
+              type="button"
+              onClick={() => setTeacherHistoryOpen(true)}
+              className={`rounded-lg px-3 py-2 text-xs font-black transition ${
+                teacherHistoryOpen
+                  ? "bg-blue-600 text-white"
+                  : "text-blue-600 hover:bg-blue-50"
+              }`}
+            >
+              <ClipboardList size={15} className="mr-1.5 inline" />
+              ประวัติการสอน (
+              {
+                sessions.filter(
+                  (item) =>
+                    item.hourEntry ||
+                    locallyCompletedSessionIds.includes(item.id),
+                ).length
+              }
+              )
+            </button>
+          </div>
         )}
       </div>
       <div className="card mt-8 overflow-hidden">
-        {sessions.length === 0 ? (
+        {displayedSessions.length === 0 ? (
           <EmptyState
-            icon={CalendarDays}
-            title="ยังไม่มีตารางเรียน"
+            icon={teacherHistoryOpen ? ClipboardList : CalendarDays}
+            title={
+              role === "admin" && adminPendingOpen
+                ? "ไม่มีรายการรอ Admin ยืนยัน"
+                : role === "teacher" && teacherHistoryOpen
+                  ? "ยังไม่มีประวัติการสอน"
+                  : "ยังไม่มีตารางเรียน"
+            }
             description={
               role === "admin"
-                ? "เพิ่มตารางแรกและกำหนดครู นักเรียน เวลา และ Google Meet link"
-                : "เมื่อ Admin กำหนดตาราง คาบของคุณจะแสดงที่นี่"
+                ? adminPendingOpen
+                  ? "เมื่อครูกดแจ้งว่าสอนเสร็จ รายการจะย้ายจากตารางสอนมาแสดงที่นี่"
+                  : "เพิ่มตารางแรกและกำหนดครู นักเรียน เวลา และ Google Meet link"
+                : role === "teacher" && teacherHistoryOpen
+                  ? "คาบที่กดยืนยันสอนเสร็จแล้วจะแสดงอยู่ในหน้านี้"
+                  : "เมื่อ Admin กำหนดตาราง คาบของคุณจะแสดงที่นี่"
             }
-            action={role === "admin" ? "เพิ่มตารางสอน" : undefined}
+            action={
+              role === "admin" && !adminPendingOpen
+                ? "เพิ่มตารางสอน"
+                : undefined
+            }
             onAction={() => setEditorOpen(true)}
           />
         ) : (
           <div className="divide-y divide-slate-100">
-            {sessions.map((session) => {
+            {displayedSessions.map((session) => {
               const start = new Date(session.startsAt);
               const end = new Date(session.endsAt);
-              const submitted = session.hourEntry?.status === "submitted";
+              const locallyCompleted = locallyCompletedSessionIds.includes(
+                session.id,
+              );
+              const submitted =
+                session.hourEntry?.status === "submitted" ||
+                (locallyCompleted && !session.hourEntry);
               const approved = session.hourEntry?.status === "approved";
+              const waitingForTeacherConfirmation =
+                role === "admin" &&
+                end.getTime() <= Date.now() &&
+                Boolean(session.teacherId) &&
+                !session.hourEntry;
               return (
-                <div key={session.id} className="p-5 sm:p-6">
+                <div
+                  key={session.id}
+                  className={`p-5 transition-colors sm:p-6 ${
+                    waitingForTeacherConfirmation
+                      ? "border-l-4 border-rose-500 bg-rose-50/80"
+                      : ""
+                  }`}
+                >
                   <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
                     <div className="flex gap-4">
-                      <span className="grid size-12 shrink-0 place-items-center rounded-xl bg-brand-50 text-brand-600">
+                      <span
+                        className={`grid size-12 shrink-0 place-items-center rounded-xl ${
+                          waitingForTeacherConfirmation
+                            ? "bg-rose-100 text-rose-600"
+                            : "bg-brand-50 text-brand-600"
+                        }`}
+                      >
                         <CalendarDays size={21} />
                       </span>
                       <div>
@@ -2104,8 +2243,19 @@ function SchedulePage({
                               รับรองแล้ว
                             </span>
                           )}
+                          {waitingForTeacherConfirmation && (
+                            <span className="inline-flex items-center gap-1.5 rounded-full bg-rose-600 px-2.5 py-1 text-[10px] font-black text-white shadow-sm shadow-rose-200">
+                              <Clock3 size={12} /> เลยเวลาสอนแล้ว · รอครูยืนยัน
+                            </span>
+                          )}
                         </div>
-                        <p className="mt-1 text-xs text-slate-500">
+                        <p
+                          className={`mt-1 text-xs ${
+                            waitingForTeacherConfirmation
+                              ? "font-bold text-rose-700"
+                              : "text-slate-500"
+                          }`}
+                        >
                           {start.toLocaleDateString("th-TH", {
                             dateStyle: "medium",
                           })}{" "}
@@ -2131,16 +2281,18 @@ function SchedulePage({
                     <div className="flex flex-wrap gap-2">
                       {role === "admin" && (
                         <>
-                          <Button
-                            variant="secondary"
-                            onClick={() => {
-                              setEditing(session);
-                              setEditorOpen(true);
-                            }}
-                          >
-                            <Pencil size={15} /> แก้ตาราง
-                          </Button>
-                          {session.teacherId && (
+                          {!adminPendingOpen && (
+                            <Button
+                              variant="secondary"
+                              onClick={() => {
+                                setEditing(session);
+                                setEditorOpen(true);
+                              }}
+                            >
+                              <Pencil size={15} /> แก้ตาราง
+                            </Button>
+                          )}
+                          {!adminPendingOpen && session.teacherId && (
                             <button
                               type="button"
                               onClick={() => unassignTeacher(session)}
@@ -2149,19 +2301,15 @@ function SchedulePage({
                               <X size={15} /> นำครูออก
                             </button>
                           )}
-                          <button
-                            type="button"
-                            onClick={() => deleteSession(session)}
-                            disabled={Boolean(session.hourEntry)}
-                            title={
-                              session.hourEntry
-                                ? "คาบนี้ส่งรับรองแล้ว จึงลบไม่ได้"
-                                : "ลบครูและคาบออกจากตาราง"
-                            }
-                            className="inline-flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 text-sm font-black text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-40"
-                          >
-                            <Trash2 size={15} /> ลบจากตาราง
-                          </button>
+                          {!adminPendingOpen && (
+                            <button
+                              type="button"
+                              onClick={() => deleteSession(session)}
+                              className="inline-flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 text-sm font-black text-blue-700 transition hover:bg-blue-100"
+                            >
+                              <Trash2 size={15} /> ลบจากตาราง
+                            </button>
+                          )}
                           {submitted && (
                             <Button onClick={() => approve(session)}>
                               <Check size={15} /> Approve
@@ -2169,21 +2317,24 @@ function SchedulePage({
                           )}
                         </>
                       )}
-                      {role !== "admin" && session.meetUrl && (
-                        <Button
-                          onClick={() =>
-                            window.open(
-                              session.meetUrl!,
-                              "_blank",
-                              "noopener,noreferrer",
-                            )
-                          }
-                        >
-                          <Video size={16} /> เข้าห้องเรียน
-                        </Button>
-                      )}
+                      {role !== "admin" &&
+                        session.meetUrl &&
+                        !(role === "teacher" && teacherHistoryOpen) && (
+                          <Button
+                            onClick={() =>
+                              window.open(
+                                session.meetUrl!,
+                                "_blank",
+                                "noopener,noreferrer",
+                              )
+                            }
+                          >
+                            <Video size={16} /> เข้าห้องเรียน
+                          </Button>
+                        )}
                       {role === "teacher" &&
                         !session.hourEntry &&
+                        !locallyCompleted &&
                         Date.now() >= end.getTime() && (
                           <Button
                             variant="secondary"
